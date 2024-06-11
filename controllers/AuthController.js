@@ -11,19 +11,20 @@ const createSendToken = (user, statusCode, res) => {
   const token = signToken(user.id);
 
   const cookieOptions = {
-    expires: new Date(
-      Date.now() + process.env.JWT_COOKIE_EXPIRES_IN * 24 * 60 * 60 * 1000
-    ),
+    expires: new Date(Date.now() + parseInt(process.env.JWT_COOKIE_EXPIRES_IN, 10) * 24 * 60 * 60 * 1000),
     httpOnly: true,
   };
 
-  res.cookie("jwt", token, cookieOptions);
+  if (process.env.NODE_ENV === 'production') {
+    cookieOptions.secure = true;
+  }
 
-  // remove password from output
+  res.cookie('jwt', token, cookieOptions);
+
   user.password = undefined;
 
   res.status(statusCode).json({
-    status: "success",
+    status: 'success',
     data: {
       user,
     },
@@ -32,7 +33,16 @@ const createSendToken = (user, statusCode, res) => {
 
 exports.registerUser = async (req, res) => {
   try {
-    if (req.body.password !== req.body.password_confirm) {
+    const {password, password_confirm, email, fullname} = req.body
+
+    if(!password || !password_confirm) {
+      return res.status(400).json({
+        message: "Validation error",
+        error: ["Password and password confirm are required"]
+      })
+    }
+
+    if (password !== password_confirm) {
       return res.status(400).json({
         message: "Validation error",
         error: ["Passwords do not match"],
@@ -40,7 +50,7 @@ exports.registerUser = async (req, res) => {
     }
 
     const existingUser = await Users.findOne({
-      where: { email: req.body.email },
+      where: { email: email },
     });
 
     if (existingUser) {
@@ -56,50 +66,54 @@ exports.registerUser = async (req, res) => {
     });
 
     const newUser = await Users.create({
-      fullname: req.body.fullname,
-      email: req.body.email,
-      password: req.body.password,
+      fullname,
+      email,
+      password,
       role_id: role.id,
     });
 
-    createSendToken(newUser, 201, res);
+    return res.status(201).json({
+      status: "success",
+      message: "User created successfully",
+    })
   } catch (error) {
     return res.status(400).json({
       message: "Validation error",
-      error: error.message,
+      error: [error.message],
     });
   }
 };
 
 exports.loginUser = async (req, res) => {
-  // 1) check fungsi validasi
-  if (!req.body.email || !req.body.password) {
-    return res.status(400).json({
-      status: "Fail",
-      message: "Validation error",
-      error: "Please Input Email or Password",
-    });
-  }
+  try {
+    const {email, password} = req.body;
+    if(!email || !password) {
+      return res.status(400).json({
+        message: "Validation error",
+        error: ["Please Input Email or Password"],
+      });
+    }
 
-  // 2) check apakah email ada dan password sudah benar
-  const userData = await Users.findOne({
-    where: {
-      email: req.body.email,
-    },
-  });
-  if (
-    !userData ||
-    !(await userData.CorrectPassword(req.body.password, userData.password))
-  ) {
-    return res.status(400).json({
-      status: "Fail",
-      message: "Error Login",
-      error: "Invalid Email or Password",
+    const userData = await Users.findOne({
+      where: {
+        email: email,
+      },
     });
+    if (!userData ||!(await userData.CorrectPassword(password, userData.password))
+    ) {
+      return res.status(400).json({
+        status: "Fail",
+        message: "Error Login",
+        error: "Invalid Email or Password",
+      });
+    }
+    createSendToken(userData, 200, res);
+  } catch (error) {
+    return res.status(500).json({
+      message: "Internal server error",
+      error: [error.message],
+    })
   }
-
-  // 3) return token
-  createSendToken(userData, 200, res);
 };
 
 exports.logoutUser = async (req, res) => {
